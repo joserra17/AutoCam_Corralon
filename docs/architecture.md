@@ -1,0 +1,51 @@
+# Arquitectura
+
+## Fase 1
+
+```text
+Navegador local
+      |
+      v
+Raspberry Pi
+Dashboard + API + programación
+      |
+ Ethernet / Modbus TCP
+      |
+      v
+Arduino Opta
+Control, seguridad y actuadores
+      |
+ RS485 / Modbus RTU (previsto)
+      |
+      v
+ESP32
+Sensores y subsistemas auxiliares
+```
+
+## Responsabilidades
+
+### Arduino Opta
+- Autoridad final sobre bombas, electroválvulas y otros actuadores críticos.
+- Secuencias, enclavamientos, estados seguros y validación de órdenes.
+- Debe mantener un comportamiento seguro aunque la Raspberry deje de responder.
+
+### Raspberry Pi
+- Dashboard web local.
+- Configuración y programación de riegos.
+- Históricos, eventos y alarmas cuando se implementen.
+- Comunicación con el Opta mediante una interfaz definida y versionada.
+
+### ESP32
+- Adquisición de sensores.
+- Procesamiento local de subsistemas auxiliares, como el mezclador, cuando sea necesario.
+- Comunicación con el Opta sin asumir autoridad sobre actuadores críticos.
+
+## Evolución prevista
+
+1. Control manual local de electroválvulas.
+2. Órdenes temporizadas.
+3. Programación de riegos.
+4. Persistencia e históricos.
+5. Sensores y fertirriego.
+6. Robustez industrial y recuperación ante fallos.
+7. Acceso remoto como fase posterior.
