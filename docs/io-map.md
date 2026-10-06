@@ -6,7 +6,7 @@ Este documento será la fuente de verdad de las entradas y salidas físicas.
 
 | ID lógico | Dispositivo | Tipo | Canal físico | Función | Estado seguro | Estado |
 |---|---|---|---|---|---|---|
-| TBD | Opta | TBD | TBD | TBD | TBD | Pendiente |
+| PUMP_FILL | Opta | Salida digital/relé | Salida 1 (`D0`) | Mando del contactor de la bomba de llenado | Desactivada (`LOW`) | Confirmado por el usuario; validar cableado antes de conectar carga |
 
 ## Reglas
 

@@ -49,3 +49,13 @@ Sensores y subsistemas auxiliares
 5. Sensores y fertirriego.
 6. Robustez industrial y recuperación ante fallos.
 7. Acceso remoto como fase posterior.
+
+## Puente USB provisional para el nivel del depósito
+
+Hasta instalar el enlace RS485, el ordenador conecta simultáneamente por USB con la ESP32 y el Opta. `tools/serial_bridge.py` valida y reenvía las medidas de nivel y la consigna. El Opta continúa siendo la autoridad sobre la salida de la bomba.
+
+```text
+ESP32 -- USB serie --> ordenador -- USB serie --> Opta -- salida 1 --> contactor bomba
+```
+
+Este puente es provisional: al perder datos durante más de 2,5 segundos, el Opta desactiva la bomba.
