@@ -149,7 +149,7 @@ def stop_calibration():
     return send_dose_to_opta("off")
 
 @app.post("/api/dosing/{duration_ms}")
-def calibrate_dose(duration_ms: int, x_operator_key: str | None = Header(default=None)):
+def calibrate_dose(duration_ms: int):
     check_dosing_enabled()
     if duration_ms not in (500, 1000, 2000):
         raise HTTPException(422, "Solo se admiten 500, 1000 o 2000 ms")
