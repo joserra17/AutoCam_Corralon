@@ -24,6 +24,11 @@ export default function App(){
   const [message,setMessage]=useState('')
   const [command,setCommand]=useState(null)
   const [events,setEvents]=useState([])
+  const [waterLitres,setWaterLitres]=useState('15')
+  const [fertilizerMl,setFertilizerMl]=useState('50')
+  const [recipePreview,setRecipePreview]=useState(null)
+  const [recipeError,setRecipeError]=useState('')
+  const [recipeLoading,setRecipeLoading]=useState(false)
   const online=!!data && !error
   // This build is a UI preview only. Never send physical control requests.
   const commandsEnabled=false
@@ -52,6 +57,22 @@ export default function App(){
   function requestCommand(type,value){
     if(!commandsEnabled){setMessage('Controles en preparación: el firmware del Opta aún no acepta órdenes HTTP seguras. No se ha enviado ninguna orden.');return}
     setCommand({type,value})
+  }
+  async function previewRecipe(event){
+    event.preventDefault()
+    setRecipeError('')
+    setRecipePreview(null)
+    setRecipeLoading(true)
+    try{
+      const result=await fetch('/api/dissolutions/preview',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({water_litres:Number(waterLitres),fertilizer_ml:Number(fertilizerMl)})
+      })
+      const json=await result.json()
+      if(!result.ok) throw new Error(typeof json.detail==='string'?json.detail:'Revisa las cantidades introducidas')
+      setRecipePreview(json)
+    }catch(e){setRecipeError(e.message)}
+    finally{setRecipeLoading(false)}
   }
   return <main className="shell">
     <header className="header">
@@ -97,6 +118,28 @@ export default function App(){
         <div className="button-grid one"><ControlButton danger disabled={!online||!commandsEnabled} onClick={()=>requestCommand('dose_off')}>Parar peristáltica</ControlButton></div>
       </section>
     </div>
+    <div className="section-label"><span>PREPARACIÓN DE DISOLUCIONES</span><span>Planificación sin accionamiento físico</span></div>
+    <section className="control-card recipe">
+      <div className="control-head"><span className="control-icon">03</span><div><h2>Nueva disolución</h2><p>Define el agua objetivo y los mililitros de fertilizante</p></div></div>
+      <form onSubmit={previewRecipe} className="recipe-form">
+        <label>Agua objetivo en el depósito (litros)
+          <input type="number" min="0.1" max="20" step="0.1" required value={waterLitres} onChange={e=>{setWaterLitres(e.target.value);setRecipePreview(null)}}/>
+        </label>
+        <label>Fertilizante a dosificar (ml)
+          <input type="number" min="0.1" max="1000" step="0.1" required value={fertilizerMl} onChange={e=>{setFertilizerMl(e.target.value);setRecipePreview(null)}}/>
+        </label>
+        <button className="action" type="submit" disabled={!online||recipeLoading}>{recipeLoading?'Validando...':'Calcular receta'}</button>
+      </form>
+      <p className="recipe-note">Los litros indicados son el <strong>volumen de agua objetivo</strong>, no litros adicionales. Se tiene en cuenta el nivel actual del depósito. Capacidad de referencia: 20 L.</p>
+      {recipeError&&<p role="alert" className="banner error-banner">{recipeError}</p>}
+      {recipePreview&&<div className="recipe-result" role="status">
+        <h3>Plan de preparación (sin ejecutar)</h3>
+        <p>Agua actual: <strong>{recipePreview.current_tank_litres} L</strong> · Agua adicional estimada: <strong>{recipePreview.estimated_water_to_add_litres} L</strong></p>
+        <p>Fertilizante: <strong>{recipePreview.fertilizer_ml} ml</strong> · Volumen final aproximado: <strong>{recipePreview.estimated_final_volume_litres} L</strong></p>
+        <ol><li>Llenado con RELAY1 bajo control del Opta</li><li>Dosificación calibrada con RELAY2</li></ol>
+        <button className="action" disabled title="Se requiere firmware de recetas, calibración y comprobaciones de seguridad">Iniciar preparación · pendiente</button>
+      </div>}
+    </section>
     <div className="bottom-grid">
       <section className="info-card"><div className="eyebrow">ESTADO DE PROTECCIONES</div><h2>{online?(faultNames[fault]||fault):'Sin comunicación'}</h2><p>Código comunicado por el Opta: <code>{online?fault:'—'}</code></p></section>
       <section className="info-card"><div className="eyebrow">ARQUITECTURA ACTUAL</div><h2>Raspberry → Opta → ESP32</h2><p>Supervisión por HTTP local, nivel por RS485 y salidas gobernadas exclusivamente por el Opta.</p></section>
