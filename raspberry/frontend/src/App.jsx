@@ -30,7 +30,6 @@ export default function App(){
   const [recipeError,setRecipeError]=useState('')
   const [recipeLoading,setRecipeLoading]=useState(false)
   const [calibrationEnabled,setCalibrationEnabled]=useState(false)
-  const [operatorKey,setOperatorKey]=useState('')
   const [calibrationBusy,setCalibrationBusy]=useState(false)
   const [calibrationLog,setCalibrationLog]=useState([])
   const online=!!data && !error
@@ -41,13 +40,13 @@ export default function App(){
       .catch(()=>setCalibrationEnabled(false))
   },[])
   async function dose(action){
-    if(calibrationBusy || !calibrationEnabled || !online || !operatorKey) return
+    if(calibrationBusy || !calibrationEnabled || !online ) return
     if(action!=='off' && !window.confirm('¿Activar RELAY2 durante '+action+' ms? Verifica que la bomba y los tubos están preparados.')) return
     setCalibrationBusy(true)
     setMessage('')
     try{
       const response=await fetch('/api/dosing/'+action,{
-        method:'POST',headers:{'X-Operator-Key':operatorKey}
+        method:'POST'
       })
       const payload=await response.json()
       if(!response.ok || payload.accepted!==true) throw Error(payload.detail||'Orden rechazada')
@@ -140,10 +139,9 @@ export default function App(){
       </section>
       <section className="control-card"><div className="control-head"><span className="control-icon">02</span><div><h2>Bomba peristáltica</h2><p>RELAY2 · Dosificación manual temporizada</p></div></div>
         <div className="control-description">Impulsos limitados por duración. La bomba debe detenerse automáticamente en el Opta.</div>
-        <label className="operator-key">Clave de operador<input type="password" value={operatorKey} onChange={e=>setOperatorKey(e.target.value)} autoComplete="off" placeholder="Clave para accionamientos" /></label>
-        <p className="control-description">{calibrationEnabled?'Control autorizado en Raspberry; comprueba que el firmware del Opta tenga la API de dosificación.':'Calibración remota bloqueada hasta instalar y habilitar el firmware del Opta.'}</p>
-        <div className="button-grid">{doses.map(ms=><ControlButton key={ms} disabled={!online||!calibrationEnabled||!operatorKey||calibrationBusy} onClick={()=>dose(ms)}>{ms} ms</ControlButton>)}</div>
-        <div className="button-grid one"><ControlButton danger disabled={!online||!calibrationEnabled||!operatorKey||calibrationBusy} onClick={()=>dose('off')}>Parar peristáltica</ControlButton></div>
+        <p className="control-description">{calibrationEnabled?'Control de calibración disponible en red local; comprobar que el Opta admite la API de dosificación.':'Dosificación deshabilitada en la Raspberry hasta terminar las pruebas de los relés.'}</p>
+        <div className="button-grid">{doses.map(ms=><ControlButton key={ms} disabled={!online||!calibrationEnabled||calibrationBusy} onClick={()=>dose(ms)}>{ms} ms</ControlButton>)}</div>
+        <div className="button-grid one"><ControlButton danger disabled={!online||!calibrationEnabled||calibrationBusy} onClick={()=>dose('off')}>Parar peristáltica</ControlButton></div>
         {calibrationLog.length>0&&<div className="calibration-log"><strong>Pulsos confirmados</strong>{calibrationLog.map((item,i)=><p key={i}>{item.time} · {item.action==='off'?'Parada':item.action+' ms'}</p>)}</div>}
       </section>
     </div>
