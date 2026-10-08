@@ -75,10 +75,11 @@ def commands_disabled(command: str):
 
 # Preview-only formulation service. No commands are sent to the Opta.
 TANK_CAPACITY_L = 20.0
+EMPTY_TOLERANCE_L = 0.10  # provisional; must match PLC calibration
 
 class DissolutionPlan(BaseModel):
     water_litres: float = Field(gt=0, le=TANK_CAPACITY_L)
-    fertilizer_ml: float = Field(gt=0, le=1000)
+    fertilizer_ml: float = Field(gt=0, le=120)
 
 @app.post("/api/dissolutions/preview")
 def preview_dissolution(plan: DissolutionPlan):
@@ -90,8 +91,10 @@ def preview_dissolution(plan: DissolutionPlan):
     level = opta.get("litres")
     if type(level) not in (int, float) or not (0 <= level <= TANK_CAPACITY_L):
         raise HTTPException(409, "Lectura de volumen no válida; no se puede planificar la receta")
-    if plan.water_litres <= level:
-        raise HTTPException(409, "El depósito ya contiene tanta agua como la consigna o más")
+    if level > EMPTY_TOLERANCE_L:
+        raise HTTPException(409, "Depósito no vacío: vaciar manualmente antes de preparar una receta")
+    if plan.fertilizer_ml > 120:  # 1 ml/s provisional, máximo 120 s por receta
+        raise HTTPException(422, "Dosificación superior al máximo provisional de 120 ml")
     total = plan.water_litres + plan.fertilizer_ml / 1000.0
     if total > TANK_CAPACITY_L:
         raise HTTPException(422, "El agua más el fertilizante superan la capacidad del depósito")
@@ -100,7 +103,10 @@ def preview_dissolution(plan: DissolutionPlan):
         "actuators_enabled": False,
         "water_target_litres": round(plan.water_litres, 3),
         "current_tank_litres": round(level, 3),
-        "estimated_water_to_add_litres": round(plan.water_litres - level, 3),
+        "estimated_water_to_add_litres": round(plan.water_litres, 3),
+        "requires_empty_tank": True,
+        "empty_tolerance_litres": EMPTY_TOLERANCE_L,
+        "estimated_dosing_seconds": round(plan.fertilizer_ml, 1),
         "fertilizer_ml": round(plan.fertilizer_ml, 2),
         "estimated_final_volume_litres": round(total, 3),
         "steps": ["RELAY1: llenado de agua (no ejecutado)",
