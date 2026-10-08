@@ -3,6 +3,7 @@ import json
 import os
 from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, HTTPException
@@ -18,7 +19,7 @@ app.add_middleware(
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173",
                    "http://192.168.50.1:5173"],
     allow_credentials=False,
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -162,3 +163,62 @@ def calibrate_dose(duration_ms: int):
     # No user-controlled direct relay switching; Opta enforces stop timer/interlocks.
     return send_dose_to_opta(str(duration_ms))
 
+
+
+# Recipes remain opt-in until dry relay tests have passed.
+RECIPES_ENABLED = os.getenv("AUTOCAM_ENABLE_RECIPES", "0") == "1"
+
+def recipe_request(path: str, method: str = "GET"):
+    req = Request(OPTA_BASE_URL + path, method=method,
+                  headers={"Connection": "close", "Accept": "application/json"})
+    try:
+        with urlopen(req, timeout=2.5) as resp:
+            data = json.loads(resp.read(4097))
+            if not isinstance(data, dict):
+                raise ValueError("Respuesta JSON inválida")
+            return data
+    except HTTPError as exc:
+        # Rejects from the PLC must not be interpreted as a successful start.
+        raise HTTPException(409 if exc.code in (400, 409, 422) else 502,
+                            "Orden rechazada por el Opta (HTTP %s)" % exc.code) from exc
+    except (URLError, TimeoutError, OSError, ValueError) as exc:
+        raise HTTPException(503, "No se ha podido confirmar la respuesta del Opta; consultar estado antes de repetir") from exc
+
+@app.get("/api/recipes/status")
+def recipe_status():
+    return recipe_request("/api/recipes/status")
+
+@app.get("/api/recipes/capabilities")
+def recipe_capabilities():
+    return {"start_enabled": RECIPES_ENABLED,
+            "empty_tolerance_litres": EMPTY_TOLERANCE_L,
+            "calibrated_ml_per_second": 1.0}
+
+@app.post("/api/recipes/start")
+def recipe_start(plan: DissolutionPlan):
+    if not RECIPES_ENABLED:
+        raise HTTPException(503, "Inicio de recetas deshabilitado hasta validar relés sin cargas")
+    # This is a convenience pre-check, NEVER a substitute for PLC interlocks.
+    state = recipe_status()
+    if state.get("state") != "idle" or state.get("empty_confirmed") is not True:
+        raise HTTPException(409, "El Opta no confirma depósito vacío y receta en espera")
+    volume = state.get("measured_litres")
+    if type(volume) not in (int, float) or not (0 <= volume <= EMPTY_TOLERANCE_L):
+        raise HTTPException(409, "Lectura de depósito no válida o no vacío")
+    if plan.water_litres + plan.fertilizer_ml / 1000.0 > TANK_CAPACITY_L:
+        raise HTTPException(422, "Se supera la capacidad del depósito")
+    # Firmware endpoint uses numeric URL components, not untrusted arbitrary paths.
+    water = format(plan.water_litres, ".3f")
+    dose = format(plan.fertilizer_ml, ".3f")
+    return recipe_request("/api/recipes/start/" + water + "/" + dose, "POST")
+
+@app.post("/api/recipes/abort")
+def recipe_abort():
+    # Emergency cancellation available even if starts are disabled.
+    return recipe_request("/api/recipes/abort", "POST")
+
+@app.post("/api/recipes/ack")
+def recipe_ack():
+    if not RECIPES_ENABLED:
+        raise HTTPException(503, "Reconocimiento de recetas deshabilitado")
+    return recipe_request("/api/recipes/ack", "POST")
