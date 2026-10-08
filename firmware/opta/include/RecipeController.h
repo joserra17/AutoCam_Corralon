@@ -13,7 +13,8 @@ public:
   static constexpr float TARGET_TOLERANCE_L = 0.20f; // provisional; adjust after real filling tests
   static constexpr uint32_t FRESH_MS = 2500;
   static constexpr uint32_t EMPTY_CONFIRM_MS = 3000;
-  static constexpr uint32_t TARGET_CONFIRM_MS = 2000;
+  static constexpr uint32_t TARGET_CONFIRM_MS = 3000;
+  static constexpr uint32_t SETTLE_LIMIT_MS = 30000;
   static constexpr uint32_t FILL_LIMIT_MS = 30UL * 60UL * 1000UL;
   static constexpr uint32_t DOSE_LIMIT_MS = 120000;
   static constexpr float CALIBRATED_ML_PER_SEC = 1.0f; // provisional water calibration
@@ -35,6 +36,8 @@ public:
     error_ = Error::None;
     state_ = State::Filling;
     phaseStarted_ = now;
+    levelInRangeSince_ = 0;
+    levelInRange_ = false;
     return true;
   }
 
@@ -55,13 +58,23 @@ public:
       if (levelL >= targetL_ - TARGET_TOLERANCE_L) {
         state_ = State::Settle;
         phaseStarted_ = now;
+        levelInRange_ = false;
       }
     } else if (state_ == State::Settle) {
-      if (levelL < targetL_ - TARGET_TOLERANCE_L ||
-          levelL > targetL_ + TARGET_TOLERANCE_L) {
+      // Brief outliers reset confirmation instead of aborting immediately.
+      // Persistent instability still aborts; never dose unless level remains
+      // within the target band for a full confirmation window.
+      if (now - phaseStarted_ > SETTLE_LIMIT_MS) {
         abort(Error::UnstableLevel); return;
       }
-      if (now - phaseStarted_ >= TARGET_CONFIRM_MS) {
+      const bool inRange = levelL >= targetL_ - TARGET_TOLERANCE_L &&
+                           levelL <= targetL_ + TARGET_TOLERANCE_L;
+      if (!inRange) {
+        levelInRange_ = false;
+      } else if (!levelInRange_) {
+        levelInRange_ = true;
+        levelInRangeSince_ = now;
+      } else if (now - levelInRangeSince_ >= TARGET_CONFIRM_MS) {
         state_ = State::Dosing;
         phaseStarted_ = now;
       }
@@ -95,6 +108,6 @@ private:
   State state_ = State::Idle;
   Error error_ = Error::None;
   float targetL_ = 0, additiveMl_ = 0;
-  uint32_t phaseStarted_ = 0, doseMs_ = 0, emptySince_ = 0;
-  bool emptyConfirmed_ = false, emptyTracking_ = false;
+  uint32_t phaseStarted_ = 0, doseMs_ = 0, emptySince_ = 0, levelInRangeSince_ = 0;
+  bool emptyConfirmed_ = false, emptyTracking_ = false, levelInRange_ = false;
 };
