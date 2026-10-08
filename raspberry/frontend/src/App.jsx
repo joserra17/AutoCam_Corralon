@@ -1,53 +1,106 @@
 import React, {useEffect, useState} from 'react'
 
-function Info({title,value,detail}) {
-  return <section className="card"><small>{title}</small><h2>{value}</h2><p>{detail}</p></section>
+const setpoints = [40,60,80]
+const doses = [500,1000,2000]
+const faultNames = {NO_SETPOINT:'Llenado deshabilitado',NONE:'Sin alarmas',SENSOR_TIMEOUT:'Sin lectura del sensor',INVALID_LEVEL:'Nivel no válido',MAX_RUN_TIME:'Tiempo máximo de bomba excedido'}
+const formatTime = date => date ? new Date(date).toLocaleTimeString('es-ES') : '—'
+
+function Symbol({name}) {
+  const icons = {drop:'◉',pump:'↻',network:'⌁',alert:'!',lock:'⌑',clock:'◷'}
+  return <span className="symbol" aria-hidden="true">{icons[name] || '•'}</span>
+}
+function StateDot({ok}) {return <span className={'dot '+(ok?'ok':'error')}/>}
+function Metric({label,value,subtitle,icon}) {
+  return <article className="metric"><div className="metric-title"><span>{label}</span><Symbol name={icon}/></div><div className="metric-value">{value}</div><div className="metric-subtitle">{subtitle}</div></article>
+}
+function ControlButton({children,onClick,disabled=false,danger=false,secondary=false}) {
+  return <button type="button" onClick={onClick} disabled={disabled} className={'action '+(danger?'danger ':'')+(secondary?'secondary':'')}>{children}</button>
 }
 
-export default function App() {
-  const [data,setData] = useState(null)
-  const [error,setError] = useState('')
-  useEffect(() => {
-    let active = true
-    let inFlight = false
-    async function poll() {
-      if (inFlight) return
-      inFlight = true
-      try {
-        const response = await fetch('/api/status', {cache:'no-store'})
-        if (!response.ok) throw new Error('HTTP '+response.status)
-        const result = await response.json()
-        if (active) { setData(result); setError('') }
-      } catch (e) {
-        if (active) { setData(null); setError('Sin telemetría del Opta ('+e.message+')') }
-      } finally { inFlight = false }
+export default function App(){
+  const [data,setData]=useState(null)
+  const [error,setError]=useState('')
+  const [lastUpdated,setLastUpdated]=useState(null)
+  const [message,setMessage]=useState('')
+  const [command,setCommand]=useState(null)
+  const [events,setEvents]=useState([])
+  const online=!!data && !error
+  // This build is a UI preview only. Never send physical control requests.
+  const commandsEnabled=false
+  useEffect(()=>{
+    let alive=true, busy=false
+    const poll=async()=>{
+      if(busy)return
+      busy=true
+      try{
+        const response=await fetch('/api/status',{cache:'no-store'})
+        if(!response.ok)throw new Error('HTTP '+response.status)
+        const payload=await response.json()
+        if(alive){setData(payload);setError('');setLastUpdated(Date.now())}
+      }catch(e){
+        if(alive){setData(null);setError('Sin respuesta del Opta ('+e.message+')')}
+      }finally{busy=false}
     }
     poll()
-    const timer = setInterval(poll, 2000)
-    return () => { active = false; clearInterval(timer) }
-  }, [])
-
-  const online = Boolean(data && !error)
-  const level = typeof data?.level_percent === 'number' ? data.level_percent : null
-  const volume = typeof data?.litres === 'number' ? data.litres.toFixed(2)+' L' : 'Sin lectura reciente'
-  return <main>
-    <header>
-      <div><h1>AutoCam Corralón</h1><p>Supervisión local · Raspberry Pi ↔ Opta Ethernet</p></div>
-      <strong className="chip">SOLO LECTURA</strong>
+    const id=setInterval(poll,2000)
+    return ()=>{alive=false;clearInterval(id)}
+  },[])
+  const percent=typeof data?.level_percent==='number'?Math.max(0,Math.min(100,data.level_percent)):null
+  const litres=typeof data?.litres==='number'?data.litres.toFixed(2):null
+  const fault=data?.fault||'SIN_DATOS'
+  const activeAlarm=online&&fault!=='NONE'&&fault!=='NO_SETPOINT'
+  function requestCommand(type,value){
+    if(!commandsEnabled){setMessage('Controles en preparación: el firmware del Opta aún no acepta órdenes HTTP seguras. No se ha enviado ninguna orden.');return}
+    setCommand({type,value})
+  }
+  return <main className="shell">
+    <header className="header">
+      <div className="brand"><span className="brandmark">AC</span><div><div className="eyebrow">AUTOMATIZACIÓN AGRÍCOLA</div><h1>AutoCam <span>Corralón</span></h1><p>Panel de control del depósito de mezcla</p></div></div>
+      <div className="top-right"><span className={'connection '+(online?'connected':'disconnected')}><StateDot ok={online}/>{online?'Opta conectado':'Opta sin conexión'}</span><span className="readonly"><Symbol name="lock"/> MODO SUPERVISIÓN</span></div>
     </header>
-    <p className={online?'notice':'warning'} role="status">
-      {online?'Opta conectado · datos obtenidos de la API HTTP':'Opta sin comunicación · salidas físicas no controlables desde este panel'}
-    </p>
-    {error && <p className="warning" role="alert">{error}</p>}
-    <div className="cards">
-      <Info title="Nivel del depósito" value={level===null?'Sin datos':level+' %'} detail={volume}/>
-      <Info title="Consigna" value={data?.setpoint_percent==null?'Sin datos':data.setpoint_percent+' %'} detail="Configurada en el Opta"/>
-      <Info title="Bomba principal · RELAY1" value={data?.pump_main?.toUpperCase()??'SIN DATOS'} detail="Estado comunicado por el Opta"/>
-      <Info title="Peristáltica · RELAY2" value={data?.pump_dosing_1?.toUpperCase()??'SIN DATOS'} detail="Estado comunicado por el Opta"/>
-      <Info title="Alarma / condición" value={data?.fault??'SIN DATOS'} detail="NO_SETPOINT indica llenado deshabilitado"/>
-      <Info title="Conexión Opta" value={online?'CONECTADO':'DESCONECTADO'} detail={data?.timestamp?'Última consulta: '+new Date(data.timestamp).toLocaleTimeString():'Esperando respuesta'}/>
+
+    {error&&<div className="banner error-banner" role="alert"><strong>Comunicación interrumpida</strong><span>{error}. No se muestran estados antiguos como actuales.</span></div>}
+    {activeAlarm&&<div className="banner alarm-banner" role="alert"><strong>Alarma activa: {fault}</strong><span>{faultNames[fault]||'Revisar monitor de estado del Opta'}</span></div>}
+    {message&&<div className="banner info-banner" role="status"><span>{message}</span><button type="button" onClick={()=>setMessage('')} aria-label="Cerrar mensaje">×</button></div>}
+
+    <div className="section-label"><span>ESTADO EN TIEMPO REAL</span><span>Última actualización: {formatTime(lastUpdated)} · refresco cada 2 s</span></div>
+    <div className="overview">
+      <section className="tank-card">
+        <div className="card-heading"><div><div className="eyebrow">DEPÓSITO PRINCIPAL</div><h2>Nivel de llenado</h2></div><span className="tag neutral">ULTRASONIDOS</span></div>
+        <div className="tank-content">
+          <div className="tank-illustration" aria-label={percent===null?'Nivel no disponible':'Nivel '+percent+'%'}>
+            <div className="tank-top"/>
+            <div className="tank-body"><div className="tank-liquid" style={{height:(percent??0)+'%'}}/></div>
+            <div className="tank-bottom"/>
+          </div>
+          <div className="tank-stat"><span className="huge">{percent===null?'—':percent}<small>{percent===null?'':'%'}</small></span><span className="tank-detail">{litres===null?'Lectura no disponible':litres+' litros medidos'}</span><div className="thin-bar"><span style={{width:(percent??0)+'%'}}/></div><div className="tank-caption">Sensor ESP32 → RS485 → Opta</div></div>
+        </div>
+      </section>
+      <div className="metrics">
+        <Metric icon="drop" label="Consigna de llenado" value={data?.setpoint_percent==null?'—':data.setpoint_percent+' %'} subtitle="Objetivo configurado en el PLC"/>
+        <Metric icon="pump" label="Bomba principal · RELAY1" value={online?String(data.pump_main).toUpperCase():'—'} subtitle="Control automático del llenado"/>
+        <Metric icon="pump" label="Peristáltica · RELAY2" value={online?String(data.pump_dosing_1).toUpperCase():'—'} subtitle="Dosificación temporizada"/>
+        <Metric icon="network" label="Comunicación" value={online?'ONLINE':'OFFLINE'} subtitle="Opta 192.168.50.2:8080"/>
+      </div>
     </div>
-    {level!==null && <section className="card"><strong>Depósito</strong><div className="levelbar"><div className="levelbar-fill" style={{width:Math.max(0,Math.min(100,level))+'%'}}/></div><p>{level} % · {volume}</p></section>}
-    <footer>Consulta automática cada 2 s · HTTP local · Sin comandos de control habilitados</footer>
+
+    <div className="section-label"><span>ACCIONAMIENTOS</span><span className="label-note"><Symbol name="lock"/> Bloqueados hasta validar control HTTP en el Opta</span></div>
+    <div className="control-grid">
+      <section className="control-card"><div className="control-head"><span className="control-icon">01</span><div><h2>Llenado del depósito</h2><p>RELAY1 · Control automático mediante consigna</p></div></div>
+        <div className="control-description">Seleccionar la consigna deseada. El Opta decide cuándo accionar la bomba aplicando sus protecciones.</div>
+        <div className="button-grid">{setpoints.map(n=><ControlButton key={n} disabled={!online||!commandsEnabled} onClick={()=>requestCommand('setpoint',n)}>{n} %</ControlButton>)}</div>
+        <div className="button-grid two"><ControlButton danger disabled={!online||!commandsEnabled} onClick={()=>requestCommand('stop')}>Detener llenado</ControlButton><ControlButton secondary disabled={!online||!commandsEnabled} onClick={()=>requestCommand('reset')}>Rearmar alarma</ControlButton></div>
+      </section>
+      <section className="control-card"><div className="control-head"><span className="control-icon">02</span><div><h2>Bomba peristáltica</h2><p>RELAY2 · Dosificación manual temporizada</p></div></div>
+        <div className="control-description">Impulsos limitados por duración. La bomba debe detenerse automáticamente en el Opta.</div>
+        <div className="button-grid">{doses.map(ms=><ControlButton key={ms} disabled={!online||!commandsEnabled} onClick={()=>requestCommand('dose',ms)}>{ms} ms</ControlButton>)}</div>
+        <div className="button-grid one"><ControlButton danger disabled={!online||!commandsEnabled} onClick={()=>requestCommand('dose_off')}>Parar peristáltica</ControlButton></div>
+      </section>
+    </div>
+    <div className="bottom-grid">
+      <section className="info-card"><div className="eyebrow">ESTADO DE PROTECCIONES</div><h2>{online?(faultNames[fault]||fault):'Sin comunicación'}</h2><p>Código comunicado por el Opta: <code>{online?fault:'—'}</code></p></section>
+      <section className="info-card"><div className="eyebrow">ARQUITECTURA ACTUAL</div><h2>Raspberry → Opta → ESP32</h2><p>Supervisión por HTTP local, nivel por RS485 y salidas gobernadas exclusivamente por el Opta.</p></section>
+    </div>
+    <footer>AutoCam Corralón · Dashboard v0.3 · Interfaz de control preparada, accionamientos remotos deshabilitados</footer>
   </main>
 }
