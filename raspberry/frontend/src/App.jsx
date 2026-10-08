@@ -153,18 +153,18 @@ export default function App(){
           <input type="number" min="0.1" max="20" step="0.1" required value={waterLitres} onChange={e=>{setWaterLitres(e.target.value);setRecipePreview(null)}}/>
         </label>
         <label>Fertilizante a dosificar (ml)
-          <input type="number" min="0.1" max="1000" step="0.1" required value={fertilizerMl} onChange={e=>{setFertilizerMl(e.target.value);setRecipePreview(null)}}/>
+          <input type="number" min="0.1" max="120" step="0.1" required value={fertilizerMl} onChange={e=>{setFertilizerMl(e.target.value);setRecipePreview(null)}}/>
         </label>
         <button className="action" type="submit" disabled={!online||recipeLoading}>{recipeLoading?'Validando...':'Calcular receta'}</button>
       </form>
-      <p className="recipe-note">Los litros indicados son el <strong>volumen de agua objetivo</strong>, no litros adicionales. Se tiene en cuenta el nivel actual del depósito. Capacidad de referencia: 20 L.</p>
+      <p className="recipe-note">Los litros indicados son el <strong>volumen de agua objetivo</strong>, no litros adicionales. El depósito debe comenzar vacío (lectura ≤ 0,10 L, tolerancia provisional). Vaciado manual obligatorio entre recetas. Capacidad de referencia: 20 L.</p>
       {recipeError&&<p role="alert" className="banner error-banner">{recipeError}</p>}
       {recipePreview&&<div className="recipe-result" role="status">
         <h3>Plan de preparación (sin ejecutar)</h3>
-        <p>Agua actual: <strong>{recipePreview.current_tank_litres} L</strong> · Agua adicional estimada: <strong>{recipePreview.estimated_water_to_add_litres} L</strong></p>
-        <p>Fertilizante: <strong>{recipePreview.fertilizer_ml} ml</strong> · Volumen final aproximado: <strong>{recipePreview.estimated_final_volume_litres} L</strong></p>
-        <ol><li>Llenado con RELAY1 bajo control del Opta</li><li>Dosificación calibrada con RELAY2</li></ol>
-        <button className="action" disabled title="Se requiere firmware de recetas, calibración y comprobaciones de seguridad">Iniciar preparación · pendiente</button>
+        <p>Depósito vacío confirmado para la simulación · Agua solicitada: <strong>{recipePreview.water_target_litres} L</strong></p>
+        <p>Dosificación con agua: <strong>{recipePreview.fertilizer_ml} ml</strong> · Tiempo estimado RELAY2: <strong>{recipePreview.estimated_dosing_seconds} s</strong> · Volumen final aproximado: <strong>{recipePreview.estimated_final_volume_litres} L</strong></p>
+        <ol><li>Verificar depósito vacío</li><li>Llenado con RELAY1</li><li>Comprobar estabilidad y RELAY1 apagado</li><li>Dosificación con RELAY2</li></ol>
+        <button className="action" disabled title="La máquina de estados aún no está integrada ni validada sobre el firmware real del Opta">Iniciar preparación · pendiente</button>
       </div>}
     </section>
     <div className="bottom-grid">
