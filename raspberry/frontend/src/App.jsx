@@ -29,10 +29,53 @@ export default function App(){
   const [recipePreview,setRecipePreview]=useState(null)
   const [recipeError,setRecipeError]=useState('')
   const [recipeLoading,setRecipeLoading]=useState(false)
+  const [recipeStatus,setRecipeStatus]=useState(null)
+  const [recipeEnabled,setRecipeEnabled]=useState(false)
+  const [recipeBusy,setRecipeBusy]=useState(false)
   const [calibrationEnabled,setCalibrationEnabled]=useState(false)
   const [calibrationBusy,setCalibrationBusy]=useState(false)
   const [calibrationLog,setCalibrationLog]=useState([])
   const online=!!data && !error
+  useEffect(()=>{
+    let mounted=true
+    async function refresh(){
+      try{
+        const [state,cap]=await Promise.all([
+          fetch('/api/recipes/status',{cache:'no-store'}),
+          fetch('/api/recipes/capabilities',{cache:'no-store'})
+        ])
+        if(!state.ok || !cap.ok)throw Error('recetas sin respuesta')
+        const [status,permissions]=await Promise.all([state.json(),cap.json()])
+        if(mounted){setRecipeStatus(status);setRecipeEnabled(permissions.start_enabled===true)}
+      }catch{if(mounted){setRecipeStatus(null);setRecipeEnabled(false)}}
+    }
+    refresh()
+    const id=setInterval(refresh,2000)
+    return ()=>{mounted=false;clearInterval(id)}
+  },[])
+  async function recipeAction(action){
+    if(recipeBusy || !online || !recipeStatus)return
+    if(action==='start'){
+      if(!recipeEnabled || recipeStatus.state!=='idle' || recipeStatus.empty_confirmed!==true)return
+      if(!window.confirm('ATENCIÓN: esto puede activar RELAY1 y RELAY2. ¿Confirmas que estás realizando una prueba controlada y que los relés/cargas están preparados?'))return
+    }
+    if(action==='abort' && !window.confirm('¿Cancelar la receta activa y solicitar al Opta detener los relés?'))return
+    if(action==='ack' && !window.confirm('¿Confirmas que el depósito se ha vaciado manualmente?'))return
+    setRecipeBusy(true)
+    setRecipeError('')
+    try{
+      const response=await fetch('/api/recipes/'+action,{method:'POST',
+        ...(action==='start'?{headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({water_litres:Number(waterLitres),fertilizer_ml:Number(fertilizerMl)})}:{})
+      })
+      const result=await response.json()
+      if(!response.ok || result.accepted===false)throw Error(result.detail||'El Opta rechazó la operación')
+      setMessage('Orden '+action+' enviada: consulta el estado confirmado del Opta')
+      const latest=await fetch('/api/recipes/status',{cache:'no-store'})
+      if(latest.ok)setRecipeStatus(await latest.json())
+    }catch(e){setRecipeError(e.message)}
+    finally{setRecipeBusy(false)}
+  }
   useEffect(()=>{
     fetch('/api/controls/capabilities',{cache:'no-store'})
       .then(r=>r.ok?r.json():Promise.reject(Error('no capabilities')))
@@ -145,7 +188,7 @@ export default function App(){
         {calibrationLog.length>0&&<div className="calibration-log"><strong>Pulsos confirmados</strong>{calibrationLog.map((item,i)=><p key={i}>{item.time} · {item.action==='off'?'Parada':item.action+' ms'}</p>)}</div>}
       </section>
     </div>
-    <div className="section-label"><span>PREPARACIÓN DE DISOLUCIONES</span><span>Planificación sin accionamiento físico</span></div>
+    <div className="section-label"><span>PREPARACIÓN DE DISOLUCIONES</span><span>{recipeEnabled?"Control local de recetas habilitado":"Inicio físico de recetas bloqueado"}</span></div>
     <section className="control-card recipe">
       <div className="control-head"><span className="control-icon">03</span><div><h2>Nueva disolución</h2><p>Define el agua objetivo y los mililitros de fertilizante</p></div></div>
       <form onSubmit={previewRecipe} className="recipe-form">
@@ -160,17 +203,27 @@ export default function App(){
       <p className="recipe-note">Los litros indicados son el <strong>volumen de agua objetivo</strong>, no litros adicionales. El depósito debe comenzar vacío (lectura ≤ 0,10 L, tolerancia provisional). Vaciado manual obligatorio entre recetas. Capacidad de referencia: 20 L.</p>
       {recipeError&&<p role="alert" className="banner error-banner">{recipeError}</p>}
       {recipePreview&&<div className="recipe-result" role="status">
-        <h3>Plan de preparación (sin ejecutar)</h3>
+        <h3>Plan de preparación</h3>
         <p>Depósito vacío confirmado para la simulación · Agua solicitada: <strong>{recipePreview.water_target_litres} L</strong></p>
         <p>Dosificación con agua: <strong>{recipePreview.fertilizer_ml} ml</strong> · Tiempo estimado RELAY2: <strong>{recipePreview.estimated_dosing_seconds} s</strong> · Volumen final aproximado: <strong>{recipePreview.estimated_final_volume_litres} L</strong></p>
         <ol><li>Verificar depósito vacío</li><li>Llenado con RELAY1</li><li>Comprobar estabilidad y RELAY1 apagado</li><li>Dosificación con RELAY2</li></ol>
-        <button className="action" disabled title="La máquina de estados aún no está integrada ni validada sobre el firmware real del Opta">Iniciar preparación · pendiente</button>
+        <p>Opta: <strong>{recipeStatus?.state??'sin comunicación'}</strong> · Depósito vacío confirmado: <strong>{recipeStatus?.empty_confirmed===true?'sí':'no'}</strong></p>
+        <button type="button" className="action" disabled={!online||!recipeEnabled||!recipeStatus||recipeStatus.state!=='idle'||recipeStatus.empty_confirmed!==true||recipeBusy||Number(waterLitres)+Number(fertilizerMl)/1000>20} onClick={()=>recipeAction('start')}>{recipeEnabled?'Iniciar preparación':'Inicio bloqueado (requiere habilitación)'}</button>
+        {!recipeEnabled&&<p>Para habilitar el inicio tras las pruebas de relés: AUTOCAM_ENABLE_RECIPES=1 en FastAPI.</p>}
       </div>}
+    </section>
+    <section className="control-card recipe">
+      <div className="control-head"><span className="control-icon">04</span><div><h2>Estado de preparación</h2><p>Información confirmada por el Opta cada 2 segundos</p></div></div>
+      <p className="recipe-note">Estado: <strong>{recipeStatus?.state??'sin comunicación'}</strong> · Nivel: <strong>{recipeStatus?.measured_litres??'—'} L</strong> · RELAY1: <strong>{recipeStatus?.relay1??'—'}</strong> · RELAY2: <strong>{recipeStatus?.relay2??'—'}</strong> · Error: <strong>{recipeStatus?.error_code??'—'}</strong></p>
+      <div className="button-grid two">
+        <ControlButton danger disabled={!online||!recipeStatus||recipeBusy||!['filling','settle','dosing'].includes(recipeStatus.state)} onClick={()=>recipeAction('abort')}>Cancelar preparación</ControlButton>
+        <ControlButton secondary disabled={!online||!recipeStatus||!recipeEnabled||recipeBusy||!['completed','aborted'].includes(recipeStatus.state)||recipeStatus.measured_litres>0.1} onClick={()=>recipeAction('ack')}>Confirmar vaciado manual</ControlButton>
+      </div>
     </section>
     <div className="bottom-grid">
       <section className="info-card"><div className="eyebrow">ESTADO DE PROTECCIONES</div><h2>{online?(faultNames[fault]||fault):'Sin comunicación'}</h2><p>Código comunicado por el Opta: <code>{online?fault:'—'}</code></p></section>
       <section className="info-card"><div className="eyebrow">ARQUITECTURA ACTUAL</div><h2>Raspberry → Opta → ESP32</h2><p>Supervisión por HTTP local, nivel por RS485 y salidas gobernadas exclusivamente por el Opta.</p></section>
     </div>
-    <footer>AutoCam Corralón · Dashboard v0.3 · Interfaz de control preparada, accionamientos remotos deshabilitados</footer>
+    <footer>AutoCam Corralón · Dashboard v0.4 · Recetas con habilitación local explícita</footer>
   </main>
 }
