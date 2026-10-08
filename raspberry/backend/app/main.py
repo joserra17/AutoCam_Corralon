@@ -6,6 +6,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 
 OPTA_STATUS_URL = os.getenv("OPTA_STATUS_URL", "http://192.168.50.2:8080/api/status")
@@ -71,3 +72,42 @@ def status():
 def commands_disabled(command: str):
     raise HTTPException(status_code=503,
                         detail="Control físico deshabilitado: dashboard solo lectura.")
+
+# Preview-only formulation service. No commands are sent to the Opta.
+TANK_CAPACITY_L = 20.0
+
+class DissolutionPlan(BaseModel):
+    water_litres: float = Field(gt=0, le=TANK_CAPACITY_L)
+    fertilizer_ml: float = Field(gt=0, le=1000)
+
+@app.post("/api/dissolutions/preview")
+def preview_dissolution(plan: DissolutionPlan):
+    # Water target is an absolute tank volume, NOT litres to add.
+    import math
+    if not math.isfinite(plan.water_litres) or not math.isfinite(plan.fertilizer_ml):
+        raise HTTPException(422, "Cantidades no válidas")
+    opta = read_opta()
+    level = opta.get("litres")
+    if type(level) not in (int, float) or not (0 <= level <= TANK_CAPACITY_L):
+        raise HTTPException(409, "Lectura de volumen no válida; no se puede planificar la receta")
+    if plan.water_litres <= level:
+        raise HTTPException(409, "El depósito ya contiene tanta agua como la consigna o más")
+    total = plan.water_litres + plan.fertilizer_ml / 1000.0
+    if total > TANK_CAPACITY_L:
+        raise HTTPException(422, "El agua más el fertilizante superan la capacidad del depósito")
+    return {
+        "mode": "preview_only",
+        "actuators_enabled": False,
+        "water_target_litres": round(plan.water_litres, 3),
+        "current_tank_litres": round(level, 3),
+        "estimated_water_to_add_litres": round(plan.water_litres - level, 3),
+        "fertilizer_ml": round(plan.fertilizer_ml, 2),
+        "estimated_final_volume_litres": round(total, 3),
+        "steps": ["RELAY1: llenado de agua (no ejecutado)",
+                  "RELAY2: dosificación calibrada (no ejecutada)"],
+        "notice": "Vista previa, no se ha accionado ningún relé. Requiere calibración y control seguro del Opta.",
+    }
+
+@app.post("/api/dissolutions/start")
+def start_dissolution_disabled():
+    raise HTTPException(503, "Inicio remoto deshabilitado hasta calibrar la bomba y validar el firmware del Opta.")
