@@ -1,12 +1,11 @@
 """AutoCam Raspberry local read-only proxy for Arduino Opta HTTP telemetry."""
 import json
-import secrets
 import os
 from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from fastapi import FastAPI, HTTPException, Header, Response
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -117,19 +116,17 @@ def start_dissolution_disabled():
 # Disabled by default. Explicit opt-in is needed once bench tests are complete.
 OPTA_BASE_URL = os.getenv("OPTA_BASE_URL", "http://192.168.50.2:8080")
 DOSING_ENABLED = os.getenv("AUTOCAM_ENABLE_DOSING", "0") == "1"
-OPERATOR_KEY = os.getenv("AUTOCAM_OPERATOR_KEY", "")
+
 
 @app.get("/api/controls/capabilities")
 def capabilities():
-    return {"dosing_enabled": DOSING_ENABLED and bool(OPERATOR_KEY),
+    return {"dosing_enabled": DOSING_ENABLED,
             "available_durations_ms": [500, 1000, 2000],
-            "requires_operator_key": True}
+            "requires_operator_key": False}
 
-def check_operator(key: str | None):
-    if not DOSING_ENABLED or not OPERATOR_KEY:
-        raise HTTPException(503, "Dosificación remota no habilitada")
-    if not key or not secrets.compare_digest(key, OPERATOR_KEY):
-        raise HTTPException(403, "Clave de operador incorrecta")
+def check_dosing_enabled():
+    if not DOSING_ENABLED:
+        raise HTTPException(503, "Dosificación deshabilitada")
 
 def send_dose_to_opta(operation: str):
     # Opta firmware must reject commands outside its own safety limits.
@@ -147,13 +144,13 @@ def send_dose_to_opta(operation: str):
     return {"accepted": True, "opta": body}
 
 @app.post("/api/dosing/off")
-def stop_calibration(x_operator_key: str | None = Header(default=None)):
-    check_operator(x_operator_key)
+def stop_calibration():
+    check_dosing_enabled()
     return send_dose_to_opta("off")
 
 @app.post("/api/dosing/{duration_ms}")
 def calibrate_dose(duration_ms: int, x_operator_key: str | None = Header(default=None)):
-    check_operator(x_operator_key)
+    check_dosing_enabled()
     if duration_ms not in (500, 1000, 2000):
         raise HTTPException(422, "Solo se admiten 500, 1000 o 2000 ms")
     # No user-controlled direct relay switching; Opta enforces stop timer/interlocks.
