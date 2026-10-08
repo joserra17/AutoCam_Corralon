@@ -12,9 +12,10 @@ int main() {
   assert(r.state()==RecipeController::State::Filling && r.relay1() && !r.relay2());
   r.update(4000, 10, true, true);
   assert(!r.relay1() && !r.relay2() && r.state()==RecipeController::State::Settle);
-  r.update(6100, 10, true, true);
+  r.update(5000, 10, true, true);
+  r.update(8101, 10, true, true);
   assert(r.relay2() && !r.relay1());
-  r.update(11101, 10, true, true);
+  r.update(13102, 10, true, true);
   assert(r.state()==RecipeController::State::Completed && !r.relay1() && !r.relay2());
   assert(!r.start(10, 2, 12000, 10, true));
   assert(!r.acknowledge(10, true));
@@ -32,3 +33,4 @@ int main() {
   assert(!x.start(20, 1, 3200, 0, true));
   return 0;
 }
+
